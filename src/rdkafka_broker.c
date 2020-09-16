@@ -3971,6 +3971,11 @@ static void rd_kafka_toppar_fetch_backoff (rd_kafka_broker_t *rkb,
         if (err == RD_KAFKA_RESP_ERR__PARTITION_EOF)
                 return;
 
+        /* Certain errors that may require manual intervention should have
+         * a longer backoff time. */
+        if (err == RD_KAFKA_RESP_ERR_TOPIC_AUTHORIZATION_FAILED)
+                backoff_ms = RD_MAX(1000, backoff_ms * 10);
+
         rktp->rktp_ts_fetch_backoff = rd_clock() + (backoff_ms * 1000);
 
         rd_rkb_dbg(rkb, FETCH, "BACKOFF",
@@ -4450,6 +4455,31 @@ rd_kafka_fetch_reply_handle (rd_kafka_broker_t *rkb,
 								 ErrorCode));
                                 }
                                 break;
+                                case RD_KAFKA_RESP_ERR_TOPIC_AUTHORIZATION_FAILED:
+                                        /* If we're not authorized to access the
+                                         * topic mark it as errored to deny
+                                         * further Fetch requests. */
+                                        if (rktp->rktp_last_error !=
+                                            hdr.ErrorCode) {
+                                                rd_kafka_consumer_err(
+                                                        rktp->rktp_fetchq,
+                                                        rd_kafka_broker_id(rkb),
+                                                        hdr.ErrorCode,
+                                                        tver->version,
+                                                        NULL, rktp,
+                                                        rktp->rktp_offsets.
+                                                        fetch_offset,
+                                                        "Fetch from broker "
+                                                        "%"PRId32" failed: %s",
+                                                        rd_kafka_broker_id(rkb),
+                                                        rd_kafka_err2str(
+                                                                hdr.ErrorCode));
+                                                rktp->rktp_last_error =
+                                                        hdr.ErrorCode;
+                                        }
+                                        break;
+
+
                                 	/* Application errors */
 				case RD_KAFKA_RESP_ERR__PARTITION_EOF:
 					if (!rkb->rkb_rk->rk_conf.enable_partition_eof)
